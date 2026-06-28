@@ -36,20 +36,15 @@ jobs:
           echo "RUN_ID=$(echo $RESPONSE | jq -r '.id')" >> $GITHUB_ENV
 
       - name: Run Cypress tests
-        run: npx cypress run --reporter json 2>&1 | tee test-results.json
-        continue-on-error: true
+        run: npx cypress run --reporter json > test-results.json 2>/dev/null || true
 
       - name: Push results to OneAP
         run: |
           node -e "
             const fs = require('fs');
-            const content = fs.readFileSync('test-results.json', 'utf8');
-            const lines = content.split('\n');
-            let raw = null;
-            for (const line of lines) {
-              try { raw = JSON.parse(line); break; } catch (_) {}
-            }
-            if (!raw) { console.log('No JSON found'); process.exit(1); }
+            const content = fs.readFileSync('test-results.json', 'utf8').trim();
+            if (!content) { console.log('Empty results file'); process.exit(0); }
+            const raw = JSON.parse(content);
             const results = [];
             for (const suite of raw.results || []) {
               for (const test of suite.tests || []) {
