@@ -1,0 +1,68 @@
+name: OneAP TestManager CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create test run in OneAP
+        id: create_run
+        run: |
+          RESPONSE=$(curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/projects/${{ secrets.TESTMANAGER_PROJECT_ID }}/runs" \
+            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"name\": \"CI Run — ${{ github.ref_name }} @ ${{ github.sha }}\",
+              \"build_version\": \"${{ github.sha }}\",
+              \"environment\": \"ci\"
+            }")
+          echo "RUN_ID=$(echo $RESPONSE | jq -r '.id')" >> $GITHUB_ENV
+
+      - name: Run Cypress tests
+        run: npx cypress run --reporter json --reporter-options "output=test-results.json"
+        continue-on-error: true
+
+      - name: Push results to OneAP
+        run: |
+          node -e "
+            const fs = require('fs');
+            const raw = JSON.parse(fs.readFileSync('test-results.json', 'utf8'));
+            const results = [];
+            for (const suite of raw.results || []) {
+              for (const test of suite.tests || []) {
+                results.push({
+                  title: test.fullTitle || test.title,
+                  status: test.state === 'passed' ? 'passed' : test.state === 'pending' ? 'skipped' : 'failed',
+                  duration_ms: test.duration || 0,
+                  notes: test.err?.message || ''
+                });
+              }
+            }
+            fs.writeFileSync('oneap-results.json', JSON.stringify({ results }));
+          "
+          curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/$RUN_ID/results" \
+            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d @oneap-results.json
+
+      - name: Complete test run
+        run: |
+          curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/$RUN_ID/complete" \
+            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" \
+            -H "Content-Type: application/json"
