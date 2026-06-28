@@ -44,7 +44,14 @@ jobs:
             const fs = require('fs');
             const content = fs.readFileSync('test-results.json', 'utf8').trim();
             if (!content) { console.log('Empty results file'); process.exit(0); }
-            const raw = JSON.parse(content);
+
+            // Find the first line that starts with '{' — that's where the JSON begins
+            const lines = content.split('\n');
+            const jsonStart = lines.findIndex(l => l.trim().startsWith('{'));
+            if (jsonStart === -1) { console.log('No JSON found in output'); process.exit(0); }
+            const jsonContent = lines.slice(jsonStart).join('\n');
+
+            const raw = JSON.parse(jsonContent);
             const results = [];
             for (const suite of raw.results || []) {
               for (const test of suite.tests || []) {
