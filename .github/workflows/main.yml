@@ -22,6 +22,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Mochawesome reporter
+        run: npm install --save-dev mochawesome
+
       - name: Create test run in OneAP
         id: create_run
         run: |
@@ -36,22 +39,15 @@ jobs:
           echo "RUN_ID=$(echo $RESPONSE | jq -r '.id')" >> $GITHUB_ENV
 
       - name: Run Cypress tests
-        run: npx cypress run --reporter json > test-results.json 2>/dev/null || true
+        run: npx cypress run --reporter mochawesome --reporter-options "reportDir=cypress/results,overwrite=true,html=false,json=true" || true
 
       - name: Push results to OneAP
         run: |
           node -e "
             const fs = require('fs');
-            const content = fs.readFileSync('test-results.json', 'utf8').trim();
-            if (!content) { console.log('Empty results file'); process.exit(0); }
-
-            // Find the first line that starts with '{' — that's where the JSON begins
-            const lines = content.split('\n');
-            const jsonStart = lines.findIndex(l => l.trim().startsWith('{'));
-            if (jsonStart === -1) { console.log('No JSON found in output'); process.exit(0); }
-            const jsonContent = lines.slice(jsonStart).join('\n');
-
-            const raw = JSON.parse(jsonContent);
+            const files = fs.readdirSync('cypress/results').filter(f => f.endsWith('.json'));
+            if (!files.length) { console.log('No result files found'); process.exit(0); }
+            const raw = JSON.parse(fs.readFileSync('cypress/results/' + files[0], 'utf8'));
             const results = [];
             for (const suite of raw.results || []) {
               for (const test of suite.tests || []) {
