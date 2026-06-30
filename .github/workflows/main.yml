@@ -32,13 +32,10 @@ jobs:
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
       - name: Run Cypress tests
-        id: cypress
-        run: |
-          npx cypress run --reporter mochawesome --reporter-options reportDir=cypress/reports,overwrite=true,json=true,html=false 2>/dev/null
-        continue-on-error: true
+        run: npx cypress run --reporter mochawesome --reporter-options reportDir=cypress/reports,overwrite=true,json=true,html=false 2>/dev/null || true
 
       - name: Push results to OneAP
-        if: always() && steps.create_run.outputs.run_id != ''
+        if: steps.create_run.outputs.run_id != ''
         run: |
           node -e "
             const fs = require('fs');
@@ -66,12 +63,13 @@ jobs:
             -d @-
 
       - name: Complete CI Run in OneAP
-        if: always() && steps.create_run.outputs.run_id != ''
+        if: steps.create_run.outputs.run_id != ''
         run: |
           curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/${{ steps.create_run.outputs.run_id }}/complete" \
             -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}"
 
-      - name: Cleanup orphan run if not completed
+      - name: Cleanup orphan run on failure
         if: failure() && steps.create_run.outputs.run_id != ''
         run: |
-          RUN_STATUS=$(curl -s "${{ secrets.TESTMANAGER_
+          curl -s -X DELETE "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/${{ steps.create_run.outputs.run_id }}" \
+            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}"
