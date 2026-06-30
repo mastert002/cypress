@@ -74,13 +74,4 @@ jobs:
       - name: Cleanup orphan run if not completed
         if: failure() && steps.create_run.outputs.run_id != ''
         run: |
-          RUN_STATUS=$(curl -s "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/${{ steps.create_run.outputs.run_id }}" \
-            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).status))")
-          if [ "$RUN_STATUS" != "completed" ]; then
-            curl -s -X DELETE "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/${{ steps.create_run.outputs.run_id }}" \
-              -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}"
-          fi
-
-      - name: Fail workflow if tests failed
-        if: steps.cypress.outcome == 'failure'
-        run: exit 1
+          RUN_STATUS=$(curl -s "${{ secrets.TESTMANAGER_
