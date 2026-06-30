@@ -1,9 +1,7 @@
-name: OneAP TestManager CI
+name: OneAP CI Test Run
 
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -12,63 +10,73 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Mochawesome reporter
-        run: npm install --save-dev mochawesome
-
-      - name: Create test run in OneAP
+      - name: Create CI Run in OneAP
         id: create_run
         run: |
           RESPONSE=$(curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/projects/${{ secrets.TESTMANAGER_PROJECT_ID }}/runs" \
-            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" \
             -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" \
             -d "{
               \"name\": \"CI Run — ${{ github.ref_name }} @ ${{ github.sha }}\",
-              \"build_version\": \"${{ github.sha }}\",
-              \"environment\": \"ci\"
+              \"environment\": \"CI\",
+              \"build_version\": \"${{ github.sha }}\"
             }")
-          echo "RUN_ID=$(echo $RESPONSE | jq -r '.id')" >> $GITHUB_ENV
+          echo "response=$RESPONSE" >> $GITHUB_OUTPUT
+          RUN_ID=$(echo "$RESPONSE" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).id))")
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
       - name: Run Cypress tests
-        run: npx cypress run --reporter mochawesome --reporter-options "reportDir=cypress/results,overwrite=true,html=false,json=true" || true
+        id: cypress
+        run: |
+          npx cypress run --reporter mochawesome --reporter-options reportDir=cypress/reports,overwrite=true,json=true,html=false 2>/dev/null
+        continue-on-error: true
 
       - name: Push results to OneAP
+        if: always() && steps.create_run.outputs.run_id != ''
         run: |
           node -e "
             const fs = require('fs');
-            const files = fs.readdirSync('cypress/results').filter(f => f.endsWith('.json'));
-            if (!files.length) { console.log('No result files found'); process.exit(0); }
-            const raw = JSON.parse(fs.readFileSync('cypress/results/' + files[0], 'utf8'));
+            const path = 'cypress/reports/mochawesome.json';
+            if (!fs.existsSync(path)) { console.log('No report found'); process.exit(0); }
+            const raw = fs.readFileSync(path, 'utf8');
+            const report = JSON.parse(raw);
             const results = [];
-            for (const suite of raw.results || []) {
-              for (const test of suite.tests || []) {
-                results.push({
-                  title: test.fullTitle || test.title,
-                  status: test.state === 'passed' ? 'passed' : test.state === 'pending' ? 'skipped' : 'failed',
-                  duration_ms: test.duration || 0,
-                  notes: test.err?.message || ''
+            (report.results || []).forEach(suite => {
+              (suite.suites || []).forEach(s => {
+                (s.tests || []).forEach(t => {
+                  results.push({
+                    title: t.fullTitle || t.title,
+                    status: t.pass ? 'passed' : t.pending ? 'skipped' : 'failed',
+                    duration_ms: t.duration || 0,
+                    notes: t.err?.message || null
+                  });
                 });
-              }
-            }
-            fs.writeFileSync('oneap-results.json', JSON.stringify({ results }));
-            console.log('Results prepared:', results.length);
-          "
-          curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/$RUN_ID/results" \
-            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" \
+              });
+            });
+            console.log(JSON.stringify({ results }));
+          " | curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/${{ steps.create_run.outputs.run_id }}/results" \
             -H "Content-Type: application/json" \
-            -d @oneap-results.json
-
-      - name: Complete test run
-        run: |
-          curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/$RUN_ID/complete" \
             -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}" \
-            -H "Content-Type: application/json"
+            -d @-
+
+      - name: Complete CI Run in OneAP
+        if: always() && steps.create_run.outputs.run_id != ''
+        run: |
+          curl -s -X POST "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/${{ steps.create_run.outputs.run_id }}/complete" \
+            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}"
+
+      - name: Cleanup orphan run on setup failure
+        if: failure() && steps.create_run.outputs.run_id == ''
+        run: |
+          curl -s -X DELETE "${{ secrets.TESTMANAGER_URL }}/api/ci/runs/${{ steps.create_run.outputs.run_id }}" \
+            -H "X-API-Key: ${{ secrets.TESTMANAGER_API_KEY }}"
+
+      - name: Fail workflow if tests failed
+        if: steps.cypress.outcome == 'failure'
+        run: exit 1
