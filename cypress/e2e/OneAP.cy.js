@@ -3,8 +3,8 @@ describe('GreenPole', () => {
   beforeEach(() => {
     cy.session('authenticated', () => {
       cy.visit('https://dev-portal.aws.mygreenpole.com/');
-      cy.get('input[name="email"]').type('regtmpuser4@africaprudential.com');
-      cy.get('input[placeholder="Enter Password"]').type('$Greenpole202605##');
+      cy.get('input[name="email"]').type(Cypress.env('email'));
+      cy.get('input[placeholder="Enter Password"]').type(Cypress.env('password'), { log: false });
       cy.get('button[type="submit"]').click();
       cy.url().should('include', '/modules/home');
     });
