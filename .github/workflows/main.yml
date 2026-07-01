@@ -34,6 +34,26 @@ jobs:
       - name: Run Cypress tests
         run: npx cypress run --reporter mochawesome --reporter-options reportDir=cypress/reports,overwrite=true,json=true,html=false 2>/dev/null || true
 
+      - name: Debug - show test titles in report
+        if: always()
+        run: |
+          echo "=== Report exists? ==="
+          ls cypress/reports/ || echo "No reports folder"
+          echo "=== Test titles found ==="
+          node -e "
+            const fs = require('fs');
+            const path = 'cypress/reports/mochawesome.json';
+            if (!fs.existsSync(path)) { console.log('No mochawesome.json found'); process.exit(0); }
+            const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+            (report.results || []).forEach(suite => {
+              (suite.suites || []).forEach(s => {
+                (s.tests || []).forEach(t => {
+                  console.log('TITLE:', t.fullTitle);
+                });
+              });
+            });
+          "
+
       - name: Push results to OneAP
         if: steps.create_run.outputs.run_id != ''
         run: |
