@@ -1,50 +1,24 @@
-// cypress.config.js — push results after each spec
-const { defineConfig } = require('cypress');
+name: OneAP CI Test Run
 
-module.exports = defineConfig({
-  reporter: 'junit',
-  reporterOptions: { mochaFile: 'results/[hash].xml' },
-  e2e: {
-    setupNodeEvents(on, config) {
-      // After all specs finish, push results to TestManager
-      on('after:run', async (results) => {
-        const TM_API_KEY = process.env.TM_API_KEY || 'tm_c36e460dda1bfe160c34408b53805ad26e01387a9609ac8f';
-        const TM_BASE_URL = 'http://localhost:3001/api';
-        const PROJECT_ID = 'c14f9b76-1b59-4225-b122-e49ca666e568';
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
-        // 1. Create a run
-        const runRes = await fetch(`${TM_BASE_URL}/ci/projects/${PROJECT_ID}/runs`, {
-          method: 'POST',
-          headers: { 'X-API-Key': TM_API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: `Cypress — ${new Date().toISOString().slice(0,10)}`,
-            environment: process.env.ENV || 'CI',
-          }),
-        }).then(r => r.json());
+jobs:
+  test:
+    runs-on: ubuntu-latest
 
-        // 2. Map Cypress results
-        const mapped = results.runs.flatMap(r =>
-          r.tests.map(t => ({
-            title: t.title.join(' '),
-            status: t.state === 'passed' ? 'passed' : t.state === 'pending' ? 'skipped' : 'failed',
-            duration_ms: t.duration,
-            notes: t.displayError || '',
-          }))
-        );
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-        // 3. Push results
-        await fetch(`${TM_BASE_URL}/ci/runs/${runRes.id}/results`, {
-          method: 'POST',
-          headers: { 'X-API-Key': TM_API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ results: mapped }),
-        });
+      - name: Install dependencies
+        run: npm ci
 
-        // 4. Complete the run
-        await fetch(`${TM_BASE_URL}/ci/runs/${runRes.id}/complete`, {
-          method: 'POST',
-          headers: { 'X-API-Key': TM_API_KEY },
-        });
-      });
-    },
-  },
-});
+      - name: Run Cypress tests
+        env:
+          TM_API_KEY: ${{ secrets.TESTMANAGER_API_KEY }}
+          TM_BASE_URL: ${{ secrets.TESTMANAGER_URL }}/api
+          TM_PROJECT_ID: ${{ secrets.TESTMANAGER_PROJECT_ID }}
+        run: npx cypress run
